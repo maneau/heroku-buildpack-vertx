@@ -5,12 +5,15 @@
 set -e
 
 OPENJDK7_URL="https://s3.amazonaws.com/heroku-jvm-langpack-java/openjdk7-u2-heroku-temaki.tar.gz"
-VERTX_URL="http://dl.bintray.com/vertx/downloads/vert.x-2.1.1.tar.gz"
+VERTX_URL="http://dl.bintray.com/vertx/downloads/vert.x-2.1.4.tar.gz"
 
 BIN_DIR=$(cd $(dirname $0); pwd) # absolute path
+. $BIN_DIR/common
+
 # parse args
 BUILD_DIR=$1
 CACHE_DIR=$2
+ENV_DIR=$3
 
 #create the cache dir if it doesn't exist
 mkdir -p $CACHE_DIR
@@ -48,7 +51,28 @@ if [ ! -d "$BUILD_DIR/.vertx" ]; then
   echo " done"
 fi
 
+# change to cache dir to install maven
+cd $CACHE_DIR
+install_maven ${CACHE_DIR} ${BUILD_DIR}
+
+if [ -n "$MAVEN_SETTINGS_PATH" ]; then
+  MAVEN_SETTINGS_OPT="-s $MAVEN_SETTINGS_PATH"
+elif [ -n "$MAVEN_SETTINGS_URL" ]; then
+  echo -n "-----> Installing settings.xml..."
+  mkdir -p .m2
+  curl --silent --max-time 10 --location $MAVEN_SETTINGS_URL --output .m2/settings.xml
+  echo " done"
+  MAVEN_SETTINGS_OPT="-s $CACHE_DIR/.m2/settings.xml"
+elif [ -f $BUILD_DIR/settings.xml ]; then
+  MAVEN_SETTINGS_OPT="-s $BUILD_DIR/settings.xml"
+else
+  unset MAVEN_SETTINGS_OPT
+fi
+
+# change to build dir to run maven
 cd $BUILD_DIR
+
+export MAVEN_OPTS="-Xmx1024m"
 
 export JAVA_HOME="$BUILD_DIR/.jdk7"
 export VERTX_HOME="$BUILD_DIR/.vertx"
@@ -56,6 +80,14 @@ export PATH=$PATH:$JAVA_HOME/bin:$VERTX_HOME/bin
 
 echo "Path is set to"
 echo $PATH
+
+# build app
+BUILDCMD="$CACHE_DIR/.maven/bin/mvn -B -Duser.home=$BUILD_DIR -Dmaven.repo.local=$CACHE_DIR/.m2/repository $MAVEN_SETTINGS_OPT -DskipTests=true clean install"
+echo "-----> executing $BUILDCMD"
+
+$BUILDCMD 2>&1 | sed -u 's/^/       /'
+
+cd $BUILD_DIR
 
 if [ -f compile.sh ]; then
     echo 'compile.sh file found, executing...'
@@ -68,3 +100,4 @@ if [ ! -f Procfile ]; then
   echo "-----> No Procfile found. Will use the following default process: "
   echo "       vertx run server.js"
 fi
+
